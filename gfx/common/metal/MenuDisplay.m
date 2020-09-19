@@ -1,21 +1,23 @@
-//
-// Created by Stuart Carnie on 6/24/18.
-//
+/*
+ * Created by Stuart Carnie on 6/24/18.
+ */
 
 #import "Context.h"
 #import "MenuDisplay.h"
 #import "ShaderTypes.h"
-#import "menu_driver.h"
+#include "../../../menu/menu_driver.h"
 #import <Metal/Metal.h>
-// TODO(sgc): this dependency is incorrect
+/* TODO(sgc): this dependency is incorrect */
 #import "../metal_common.h"
 
 @implementation MenuDisplay
 {
    Context *_context;
    MTLClearColor _clearColor;
-   bool _clearNextRender;
+   MTLScissorRect _scissorRect;
+   BOOL _useScissorRect;
    Uniforms _uniforms;
+   bool _clearNextRender;
 }
 
 - (instancetype)initWithContext:(Context *)context
@@ -25,6 +27,7 @@
       _context = context;
       _clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
       _uniforms.projectionMatrix = matrix_proj_ortho(0, 1, 0, 1);
+      _useScissorRect = NO;
    }
    return self;
 }
@@ -73,13 +76,25 @@
    return _clearColor;
 }
 
-- (MTLPrimitiveType)_toPrimitiveType:(enum menu_display_prim_type)prim
+- (void)setScissorRect:(MTLScissorRect)rect
+{
+   _scissorRect = rect;
+   _useScissorRect = YES;
+}
+
+- (void)clearScissorRect
+{
+   _useScissorRect = NO;
+   [_context resetScissorRect];
+}
+
+- (MTLPrimitiveType)_toPrimitiveType:(enum gfx_display_prim_type)prim
 {
    switch (prim)
    {
-      case MENU_DISPLAY_PRIM_TRIANGLESTRIP:
+      case GFX_DISPLAY_PRIM_TRIANGLESTRIP:
          return MTLPrimitiveTypeTriangleStrip;
-      case MENU_DISPLAY_PRIM_TRIANGLES:
+      case GFX_DISPLAY_PRIM_TRIANGLES:
          return MTLPrimitiveTypeTriangle;
       default:
          RARCH_LOG("unexpected primitive type %d\n", prim);
@@ -87,52 +102,52 @@
    }
 }
 
-- (void)drawPipeline:(menu_display_ctx_draw_t *)draw video:(video_frame_info_t *)video
+- (void)drawPipeline:(gfx_display_ctx_draw_t *)draw
 {
    static struct video_coords blank_coords;
-   
+
    draw->x = 0;
    draw->y = 0;
    draw->matrix_data = NULL;
-   
+
    _uniforms.outputSize = simd_make_float2(_context.viewport->full_width, _context.viewport->full_height);
-   
-   draw->pipeline.backend_data = &_uniforms;
-   draw->pipeline.backend_data_size = sizeof(_uniforms);
-   
-   switch (draw->pipeline.id)
+
+   draw->backend_data = &_uniforms;
+   draw->backend_data_size = sizeof(_uniforms);
+
+   switch (draw->pipeline_id)
    {
-      // ribbon
+      /* ribbon */
       default:
       case VIDEO_SHADER_MENU:
       case VIDEO_SHADER_MENU_2:
       {
-         video_coord_array_t *ca = menu_display_get_coords_array();
+         video_coord_array_t *ca = gfx_display_get_coords_array();
          draw->coords = (struct video_coords *)&ca->coords;
          break;
       }
-      
+
       case VIDEO_SHADER_MENU_3:
       case VIDEO_SHADER_MENU_4:
       case VIDEO_SHADER_MENU_5:
       case VIDEO_SHADER_MENU_6:
       {
-         draw->coords = &blank_coords;
+         draw->coords          = &blank_coords;
          blank_coords.vertices = 4;
-         draw->prim_type = MENU_DISPLAY_PRIM_TRIANGLESTRIP;
+         draw->prim_type       = GFX_DISPLAY_PRIM_TRIANGLESTRIP;
          break;
       }
    }
-   
+
    _uniforms.time += 0.01;
 }
 
-- (void)draw:(menu_display_ctx_draw_t *)draw video:(video_frame_info_t *)video
+- (void)draw:(gfx_display_ctx_draw_t *)draw
 {
    const float *vertex = draw->coords->vertex ?: MenuDisplay.defaultVertices;
    const float *tex_coord = draw->coords->tex_coord ?: MenuDisplay.defaultTexCoords;
    const float *color = draw->coords->color ?: MenuDisplay.defaultColor;
-   
+
    NSUInteger needed = draw->coords->vertices * sizeof(SpriteVertex);
    BufferRange range;
    if (![_context allocRange:&range length:needed])
@@ -140,25 +155,25 @@
       RARCH_ERR("[Metal]: MenuDisplay unable to allocate buffer of %d bytes", needed);
       return;
    }
-   
+
    NSUInteger vertexCount = draw->coords->vertices;
    SpriteVertex *pv = (SpriteVertex *)range.data;
    for (unsigned i = 0; i < draw->coords->vertices; i++, pv++)
    {
       pv->position = simd_make_float2(vertex[0], 1.0f - vertex[1]);
       vertex += 2;
-      
+
       pv->texCoord = simd_make_float2(tex_coord[0], tex_coord[1]);
       tex_coord += 2;
-      
+
       pv->color = simd_make_float4(color[0], color[1], color[2], color[3]);
       color += 4;
    }
-   
+
    id<MTLRenderCommandEncoder> rce = _context.rce;
    if (_clearNextRender)
    {
-      [_context resetRenderViewport];
+      [_context resetRenderViewport:kFullscreenViewport];
       [_context drawQuadX:0
                         y:0
                         w:1
@@ -170,7 +185,7 @@
       ];
       _clearNextRender = NO;
    }
-   
+
    MTLViewport vp = {
       .originX = draw->x,
       .originY = _context.viewport->full_height - draw->y - draw->height,
@@ -180,8 +195,12 @@
       .zfar    = 1,
    };
    [rce setViewport:vp];
-   
-   switch (draw->pipeline.id)
+
+   if (_useScissorRect) {
+      [rce setScissorRect:_scissorRect];
+   }
+
+   switch (draw->pipeline_id)
    {
 #if HAVE_SHADERPIPELINE
       case VIDEO_SHADER_MENU:
@@ -190,23 +209,23 @@
       case VIDEO_SHADER_MENU_4:
       case VIDEO_SHADER_MENU_5:
       case VIDEO_SHADER_MENU_6:
-         [rce setRenderPipelineState:[_context getStockShader:draw->pipeline.id blend:_blend]];
-         [rce setVertexBytes:draw->pipeline.backend_data length:draw->pipeline.backend_data_size atIndex:BufferIndexUniforms];
+         [rce setRenderPipelineState:[_context getStockShader:draw->pipeline_id blend:_blend]];
+         [rce setVertexBytes:draw->backend_data length:draw->backend_data_size atIndex:BufferIndexUniforms];
          [rce setVertexBuffer:range.buffer offset:range.offset atIndex:BufferIndexPositions];
-         [rce setFragmentBytes:draw->pipeline.backend_data length:draw->pipeline.backend_data_size atIndex:BufferIndexUniforms];
+         [rce setFragmentBytes:draw->backend_data length:draw->backend_data_size atIndex:BufferIndexUniforms];
          [rce drawPrimitives:[self _toPrimitiveType:draw->prim_type] vertexStart:0 vertexCount:vertexCount];
          return;
 #endif
       default:
          break;
    }
-   
+
    Texture *tex = (__bridge Texture *)(void *)draw->texture;
    if (tex == nil)
       return;
-   
+
    [rce setRenderPipelineState:[_context getStockShader:VIDEO_SHADER_STOCK_BLEND blend:_blend]];
-   
+
    Uniforms uniforms = {
       .projectionMatrix = draw->matrix_data ? make_matrix_float4x4((const float *)draw->matrix_data)
                                             : _uniforms.projectionMatrix

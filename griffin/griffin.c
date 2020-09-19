@@ -1,6 +1,7 @@
 /* RetroArch - A frontend for libretro.
 * Copyright (C) 2010-2014 - Hans-Kristian Arntzen
 * Copyright (C) 2011-2017 - Daniel De Matteis
+* Copyright (C) 2016-2019 - Brad Parker
 *
 * RetroArch is free software: you can redistribute it and/or modify it under the terms
 * of the GNU General Public License as published by the Free Software Found-
@@ -13,6 +14,7 @@
 * You should have received a copy of the GNU General Public License along with RetroArch.
 * If not, see <http://www.gnu.org/licenses/>.
 */
+#define VFS_FRONTEND
 #include <retro_environment.h>
 
 #define CINTERFACE
@@ -25,6 +27,38 @@
 #define HAVE_COMPRESSION 1
 #endif
 
+#if defined(HAVE_OPENGL) && defined(HAVE_ANGLE)
+#ifndef HAVE_OPENGLES
+#define HAVE_OPENGLES  1
+#endif
+#if !defined(HAVE_OPENGLES3) && !defined(HAVE_OPENGLES2)
+#define HAVE_OPENGLES3 1
+#endif
+#ifndef HAVE_EGL
+#define HAVE_EGL       1
+#endif
+#endif
+
+#ifndef _XBOX
+#if defined(_WIN32)
+#if defined(_MSC_VER) && _MSC_VER >= 1500
+
+#ifndef HAVE_MMAP_WIN32
+#define HAVE_MMAP_WIN32
+#endif
+
+#elif !defined(_MSC_VER)
+
+#ifndef HAVE_MMAP_WIN32
+#define HAVE_MMAP_WIN32
+#endif
+#endif
+
+#endif
+#endif
+
+#define JSON_STATIC 1 /* must come before runtime_file, netplay_room_parse and jsonsax_full */
+
 #if _MSC_VER && !defined(__WINRT__)
 #include "../libretro-common/compat/compat_snprintf.c"
 #endif
@@ -33,6 +67,10 @@
 
 #if defined(HAVE_LOGGER) && !defined(ANDROID)
 #include "../network/net_logger.c"
+#endif
+
+#if TARGET_OS_OSX
+#include "../ui/drivers/cocoa/ui_cocoa_application.c"
 #endif
 
 /*============================================================
@@ -112,6 +150,7 @@ COMPRESSION
 
 #ifdef HAVE_ZLIB
 #include "../libretro-common/streams/trans_stream_zlib.c"
+#include "../libretro-common/streams/rzip_stream.c"
 #endif
 
 /*============================================================
@@ -119,12 +158,12 @@ ENCODINGS
 ============================================================ */
 #include "../libretro-common/encodings/encoding_utf.c"
 #include "../libretro-common/encodings/encoding_crc32.c"
+#include "../libretro-common/encodings/encoding_base64.c"
 
 /*============================================================
 PERFORMANCE
 ============================================================ */
 #include "../libretro-common/features/features_cpu.c"
-#include "../performance_counters.c"
 
 /*============================================================
 CONFIG FILE
@@ -135,10 +174,16 @@ CONFIG FILE
 #undef strcasecmp
 #endif
 
+#ifdef HAVE_CONFIGFILE
 #include "../libretro-common/file/config_file.c"
 #include "../libretro-common/file/config_file_userdata.c"
-#include "../managers/core_manager.c"
-#include "../managers/core_option_manager.c"
+#endif
+
+/*============================================================
+CONTENT METADATA RECORDS
+============================================================ */
+#include "../runtime_file.c"
+#include "../disk_index_file.c"
 
 /*============================================================
 ACHIEVEMENTS
@@ -149,24 +194,44 @@ ACHIEVEMENTS
 #endif
 
 #include "../libretro-common/formats/json/jsonsax.c"
+#include "../libretro-common/formats/cdfs/cdfs.c"
 #include "../network/net_http_special.c"
+
 #include "../cheevos/cheevos.c"
 #include "../cheevos/badges.c"
-#include "../cheevos/var.c"
-#include "../cheevos/cond.c"
+#include "../cheevos/cheevos_memory.c"
+#include "../cheevos/cheevos_parser.c"
+
+#include "../deps/rcheevos/src/rcheevos/alloc.c"
+#include "../deps/rcheevos/src/rcheevos/compat.c"
+#include "../deps/rcheevos/src/rcheevos/condition.c"
+#include "../deps/rcheevos/src/rcheevos/condset.c"
+#include "../deps/rcheevos/src/rcheevos/consoleinfo.c"
+#include "../deps/rcheevos/src/rcheevos/format.c"
+#include "../deps/rcheevos/src/rcheevos/lboard.c"
+#include "../deps/rcheevos/src/rcheevos/memref.c"
+#include "../deps/rcheevos/src/rcheevos/operand.c"
+#include "../deps/rcheevos/src/rcheevos/richpresence.c"
+#include "../deps/rcheevos/src/rcheevos/runtime.c"
+#include "../deps/rcheevos/src/rcheevos/runtime_progress.c"
+#include "../deps/rcheevos/src/rcheevos/trigger.c"
+#include "../deps/rcheevos/src/rcheevos/value.c"
+#include "../deps/rcheevos/src/rhash/hash.c"
+#include "../deps/rcheevos/src/rurl/url.c"
+
 #endif
 
 /*============================================================
 MD5
 ============================================================ */
-#if defined(HAVE_CHEEVOS) || (defined(HAVE_HTTPSERVER) && defined(HAVE_ZLIB))
 #include "../libretro-common/utils/md5.c"
-#endif
 
 /*============================================================
 CHEATS
 ============================================================ */
+#ifdef HAVE_CHEATS
 #include "../managers/cheat_manager.c"
+#endif
 #include "../libretro-common/hash/rhash.c"
 
 /*============================================================
@@ -183,11 +248,13 @@ VIDEO CONTEXT
 
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
 
-#if defined(HAVE_OPENGL) || defined(HAVE_VULKAN)
+#if defined(HAVE_OPENGL) || defined(HAVE_OPENGL1) || defined(HAVE_VULKAN) || defined(HAVE_OPENGLES)
 #include "../gfx/drivers_context/wgl_ctx.c"
 #endif
+#if defined(HAVE_VULKAN)
+#include "../gfx/drivers_context/w_vk_ctx.c"
+#endif
 
-#include "../gfx/drivers_context/gdi_ctx.c"
 #include "../gfx/display_servers/dispserv_win32.c"
 
 #if defined(HAVE_FFMPEG)
@@ -198,10 +265,14 @@ VIDEO CONTEXT
 
 #endif
 
-#if defined(__CELLOS_LV2__)
+#if defined(__CELLOS_LV2__) && !defined(__PSL1GHT__)
 #include "../gfx/drivers_context/ps3_ctx.c"
 #elif defined(ANDROID)
 #include "../gfx/drivers_context/android_ctx.c"
+#if defined(HAVE_VULKAN)
+#include "../gfx/drivers_context/android_vk_ctx.c"
+#endif
+#include "../gfx/display_servers/dispserv_android.c"
 #elif defined(__QNX__)
 #include "../gfx/drivers_context/qnx_ctx.c"
 #elif defined(EMSCRIPTEN)
@@ -209,7 +280,6 @@ VIDEO CONTEXT
 #elif defined(__APPLE__) && !defined(TARGET_IPHONE_SIMULATOR) && !defined(TARGET_OS_IPHONE)
 #include "../gfx/drivers_context/cgl_ctx.c"
 #endif
-
 
 #if defined(HAVE_VIVANTE_FBDEV)
 #include "../gfx/drivers_context/vivante_fbdev_ctx.c"
@@ -221,6 +291,9 @@ VIDEO CONTEXT
 
 #ifdef HAVE_WAYLAND
 #include "../gfx/drivers_context/wayland_ctx.c"
+#ifdef HAVE_VULKAN
+#include "../gfx/drivers_context/wayland_vk_ctx.c"
+#endif
 #endif
 
 #ifdef HAVE_DRM
@@ -229,6 +302,7 @@ VIDEO CONTEXT
 
 #ifdef HAVE_VULKAN
 #include "../gfx/common/vulkan_common.c"
+#include "../gfx/drivers_display/gfx_display_vulkan.c"
 #include "../libretro-common/vulkan/vulkan_symbol_wrapper.c"
 #ifdef HAVE_VULKAN_DISPLAY
 #include "../gfx/drivers_context/khr_display_ctx.c"
@@ -246,11 +320,20 @@ VIDEO CONTEXT
 #include "../gfx/drivers_context/vc_egl_ctx.c"
 #endif
 
+#if defined(_WIN32) && defined(HAVE_ANGLE)
+#include "../gfx/common/angle_common.c"
+#endif
+
+#if defined(__WINRT__)
+#include "../gfx/drivers_context/uwp_egl_ctx.c"
+#endif
+
 #endif
 
 #if defined(HAVE_X11)
 #include "../gfx/common/x11_common.c"
 #include "../gfx/common/xinerama_common.c"
+#include "../gfx/display_servers/dispserv_x11.c"
 
 #ifdef HAVE_DBUS
 #include "../gfx/common/dbus_common.c"
@@ -258,6 +341,10 @@ VIDEO CONTEXT
 
 #ifndef HAVE_OPENGLES
 #include "../gfx/drivers_context/x_ctx.c"
+#endif
+
+#ifdef HAVE_VULKAN
+#include "../gfx/drivers_context/x_vk_ctx.c"
 #endif
 
 #ifdef HAVE_EGL
@@ -269,8 +356,13 @@ VIDEO CONTEXT
 /*============================================================
 VIDEO SHADERS
 ============================================================ */
+#if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_HLSL) || defined(HAVE_SLANG)
 #include "../gfx/video_shader_parse.c"
-#include "../gfx/drivers_shader/shader_null.c"
+#endif
+
+#ifdef HAVE_SLANG
+#include "../gfx/drivers_shader/glslang_util.c"
+#endif
 
 #ifdef HAVE_CG
 #ifdef HAVE_OPENGL
@@ -306,10 +398,12 @@ VIDEO IMAGE
 #endif
 #ifdef HAVE_RBMP
 #include "../libretro-common/formats/bmp/rbmp.c"
-#include "../libretro-common/formats/bmp/rbmp_encode.c"
 #endif
 
+#include "../libretro-common/formats/bmp/rbmp_encode.c"
+#ifdef HAVE_RWAV
 #include "../libretro-common/formats/wav/rwav.c"
+#endif
 
 /*============================================================
 VIDEO DRIVER
@@ -320,11 +414,13 @@ VIDEO DRIVER
 #if defined(HAVE_D3D8)
 #include "../gfx/drivers/d3d8.c"
 #include "../gfx/common/d3d8_common.c"
+#include "../gfx/drivers_display/gfx_display_d3d8.c"
 #endif
 
 #if defined(HAVE_D3D9)
 #include "../gfx/drivers/d3d9.c"
 #include "../gfx/common/d3d9_common.c"
+#include "../gfx/drivers_display/gfx_display_d3d9.c"
 
 #ifdef HAVE_HLSL
 #include "../gfx/drivers_renderchain/d3d9_hlsl_renderchain.c"
@@ -341,16 +437,19 @@ VIDEO DRIVER
 #if defined(HAVE_D3D11)
 #include "../gfx/drivers/d3d11.c"
 #include "../gfx/common/d3d11_common.c"
+#include "../gfx/drivers_display/gfx_display_d3d11.c"
 #endif
 
 #if defined(HAVE_D3D12)
 #include "../gfx/drivers/d3d12.c"
 #include "../gfx/common/d3d12_common.c"
+#include "../gfx/drivers_display/gfx_display_d3d12.c"
 #endif
 
 #if defined(HAVE_D3D10)
 #include "../gfx/drivers/d3d10.c"
 #include "../gfx/common/d3d10_common.c"
+#include "../gfx/drivers_display/gfx_display_d3d10.c"
 #endif
 
 #if defined(HAVE_D3D10) || defined(HAVE_D3D11) || defined(HAVE_D3D12)
@@ -367,10 +466,12 @@ VIDEO DRIVER
 
 #if defined(__wiiu__)
 #include "../gfx/drivers/gx2_gfx.c"
+#include "../gfx/drivers_display/gfx_display_wiiu.c"
 #endif
 
 #ifdef HAVE_SDL2
 #include "../gfx/drivers/sdl2_gfx.c"
+#include "../gfx/common/sdl2_common.c"
 #endif
 
 #ifdef HAVE_VG
@@ -389,13 +490,23 @@ VIDEO DRIVER
 #include "../gfx/drivers/drm_gfx.c"
 #endif
 
-#include "../gfx/display_servers/dispserv_null.c"
+#ifdef HAVE_OPENGL1
+#include "../gfx/drivers/gl1.c"
+#include "../gfx/drivers_display/gfx_display_gl1.c"
+#endif
+
+#ifdef HAVE_OPENGL_CORE
+#include "../gfx/drivers/gl_core.c"
+#include "../gfx/drivers_display/gfx_display_gl_core.c"
+#endif
 
 #ifdef HAVE_OPENGL
-#include "../gfx/common/gl_common.c"
 #include "../gfx/drivers/gl.c"
+#include "../gfx/drivers_display/gfx_display_gl.c"
+#endif
+
+#if defined(HAVE_OPENGL) || defined(HAVE_OPENGL_CORE)
 #include "../libretro-common/gfx/gl_capabilities.c"
-#include "../gfx/drivers_renderchain/gl2_renderchain.c"
 
 #ifndef HAVE_PSGL
 #include "../libretro-common/glsym/rglgen.c"
@@ -414,10 +525,14 @@ VIDEO DRIVER
 #include "../gfx/drivers/xvideo.c"
 #endif
 
-#if defined(GEKKO)
+#if defined(__PSL1GHT__)
+#include "../gfx/drivers/gcm_gfx.c"
+#elif defined(GEKKO)
 #include "../gfx/drivers/gx_gfx.c"
 #elif defined(PSP)
 #include "../gfx/drivers/psp1_gfx.c"
+#elif defined(PS2)
+#include "../gfx/drivers/ps2_gfx.c"
 #elif defined(HAVE_VITA2D)
 #include "../deps/libvita2d/source/vita2d.c"
 #include "../deps/libvita2d/source/vita2d_texture.c"
@@ -425,20 +540,34 @@ VIDEO DRIVER
 #include "../deps/libvita2d/source/utils.c"
 
 #include "../gfx/drivers/vita2d_gfx.c"
+#include "../gfx/drivers_display/gfx_display_vita2d.c"
 #elif defined(_3DS)
 #include "../gfx/drivers/ctr_gfx.c"
+#include "../gfx/drivers_display/gfx_display_ctr.c"
 #elif defined(XENON)
 #include "../gfx/drivers/xenon360_gfx.c"
 #elif defined(DJGPP)
 #include "../gfx/drivers/vga_gfx.c"
 #endif
-#include "../gfx/drivers/nullgfx.c"
 
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
+#ifdef HAVE_GDI
 #include "../gfx/drivers/gdi_gfx.c"
+#include "../gfx/drivers_display/gfx_display_gdi.c"
+#endif
 #endif
 
 #include "../deps/ibxm/ibxm.c"
+
+#ifdef HAVE_VIDEO_LAYOUT
+#include "../gfx/video_layout.c"
+#include "../gfx/video_layout/view.c"
+#include "../gfx/video_layout/element.c"
+#include "../gfx/video_layout/component.c"
+#include "../gfx/video_layout/internal.c"
+#include "../gfx/video_layout/scope.c"
+#include "../gfx/video_layout/load.c"
+#endif
 
 /*============================================================
 FONTS
@@ -464,16 +593,24 @@ FONTS
 #include "../gfx/drivers_font_renderer/coretext.c"
 #endif
 
-#if defined(HAVE_LIBDBGFONT)
-#include "../gfx/drivers_font/ps_libdbgfont.c"
+#ifdef HAVE_OPENGL1
+#include "../gfx/drivers_font/gl1_raster_font.c"
 #endif
 
 #if defined(HAVE_OPENGL)
 #include "../gfx/drivers_font/gl_raster_font.c"
 #endif
 
+#ifdef HAVE_OPENGL_CORE
+#include "../gfx/drivers_font/gl_core_raster_font.c"
+#endif
+
 #if defined(_XBOX1)
 #include "../gfx/drivers_font/xdk1_xfonts.c"
+#endif
+
+#if defined(PS2)
+#include "../gfx/drivers_font/ps2_font.c"
 #endif
 
 #if defined(VITA)
@@ -497,7 +634,9 @@ FONTS
 #endif
 
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
+#ifdef HAVE_GDI
 #include "../gfx/drivers_font/gdi_font.c"
+#endif
 #endif
 
 #if defined(HAVE_VULKAN)
@@ -520,34 +659,49 @@ FONTS
 INPUT
 ============================================================ */
 #include "../tasks/task_autodetect.c"
+#ifdef HAVE_BLISSBOX
+#include "../tasks/task_autodetect_blissbox.c"
+#endif
+#ifdef HAVE_AUDIOMIXER
 #include "../tasks/task_audio_mixer.c"
+#endif
 #include "../input/input_keymaps.c"
-#include "../input/input_remapping.c"
 
 #ifdef HAVE_OVERLAY
-#include "../input/input_overlay.c"
 #include "../led/drivers/led_overlay.c"
 #include "../tasks/task_overlay.c"
 #endif
 
 #ifdef HAVE_X11
-#include "../input/common/x11_input_common.c"
+#include "../input/common/input_x11_common.c"
 #endif
 
 #if defined(_WIN32) && !defined(_XBOX) && _WIN32_WINNT >= 0x0501 && !defined(__WINRT__)
+#ifdef HAVE_WINRAWINPUT
 /* winraw only available since XP */
 #include "../input/drivers/winraw_input.c"
+#endif
 #endif
 
 #include "../input/input_autodetect_builtin.c"
 
 #if defined(__CELLOS_LV2__)
+#ifdef __PSL1GHT__
+#include "../input/drivers/psl1ght_input.c"
+#else
 #include "../input/drivers/ps3_input.c"
 #include "../input/drivers_joypad/ps3_joypad.c"
+#endif
 #elif defined(SN_TARGET_PSP2) || defined(PSP) || defined(VITA)
 #include "../input/drivers/psp_input.c"
 #include "../input/drivers_joypad/psp_joypad.c"
-#elif defined(HAVE_COCOA) || defined(HAVE_COCOATOUCH)
+#elif defined(ORBIS)
+#include "../input/drivers/ps4_input.c"
+#include "../input/drivers_joypad/ps4_joypad.c"
+#elif defined(PS2)
+#include "../input/drivers/ps2_input.c"
+#include "../input/drivers_joypad/ps2_joypad.c"
+#elif defined(HAVE_COCOA) || defined(HAVE_COCOATOUCH) || defined(HAVE_COCOA_METAL)
 #include "../input/drivers/cocoa_input.c"
 #elif defined(_3DS)
 #include "../input/drivers/ctr_input.c"
@@ -556,16 +710,26 @@ INPUT
 #include "../input/drivers/gx_input.c"
 #include "../input/drivers_joypad/gx_joypad.c"
 #elif defined(__wiiu__)
+#include "../input/common/hid/hid_device_driver.c"
+#include "../input/common/hid/device_wiiu_gca.c"
+#include "../input/common/hid/device_ds3.c"
+#include "../input/common/hid/device_ds4.c"
+#include "../input/common/hid/device_null.c"
 #include "../input/drivers/wiiu_input.c"
 #include "../input/drivers_joypad/wiiu_joypad.c"
+#include "../input/drivers_joypad/wiiu/hidpad_driver.c"
+#include "../input/drivers_joypad/wiiu/kpad_driver.c"
+#include "../input/drivers_joypad/wiiu/wpad_driver.c"
+#include "../input/drivers_joypad/wiiu/pad_functions.c"
 #elif defined(_XBOX)
 #include "../input/drivers/xdk_xinput_input.c"
+#ifdef _XBOX1
 #include "../input/drivers_joypad/xdk_joypad.c"
+#endif
 #elif defined(XENON)
 #include "../input/drivers/xenon360_input.c"
 #elif defined(ANDROID)
 #include "../input/drivers/android_input.c"
-#include "../input/drivers_keyboard/keyboard_event_android.c"
 #include "../input/drivers_joypad/android_joypad.c"
 #elif defined(__QNX__)
 #include "../input/drivers/qnx_input.c"
@@ -576,9 +740,13 @@ INPUT
 #elif defined(DJGPP)
 #include "../input/drivers/dos_input.c"
 #include "../input/drivers_joypad/dos_joypad.c"
+#elif defined(__WINRT__)
+#include "../input/drivers/xdk_xinput_input.c"
+#include "../input/drivers/uwp_input.c"
 #endif
 
 #ifdef HAVE_WAYLAND
+#include "../input/common/wayland_common.c"
 #include "../input/drivers/wayland_input.c"
 #endif
 
@@ -588,7 +756,11 @@ INPUT
 #endif
 
 #ifdef HAVE_XINPUT
+#ifdef HAVE_DINPUT
+#include "../input/drivers_joypad/xinput_hybrid_joypad.c"
+#else
 #include "../input/drivers_joypad/xinput_joypad.c"
+#endif
 #endif
 
 #if defined(__linux__) && !defined(ANDROID)
@@ -606,15 +778,12 @@ INPUT
 #include "../input/drivers_joypad/udev_joypad.c"
 #endif
 
-#include "../input/drivers/nullinput.c"
-#include "../input/drivers_joypad/null_joypad.c"
-
 /*============================================================
 INPUT (HID)
 ============================================================ */
 #ifdef HAVE_HID
+#include "../input/common/input_hid_common.c"
 #include "../input/drivers_joypad/hid_joypad.c"
-#include "../input/drivers_hid/null_hid.c"
 
 #if defined(HAVE_LIBUSB) && defined(HAVE_THREADS)
 #include "../input/drivers_hid/libusb_hid.c"
@@ -642,27 +811,15 @@ INPUT (HID)
 #include "../input/connect/connect_wiiugca.c"
 #include "../input/connect/connect_ps2adapter.c"
 #include "../input/connect/connect_psxadapter.c"
+#include "../input/connect/connect_retrode.c"
+#include "../input/connect/connect_ps4_hori_mini.c"
 #endif
 
 /*============================================================
  KEYBOARD EVENT
  ============================================================ */
-
-#ifdef __APPLE__
-#include "../input/drivers_keyboard/keyboard_event_apple.c"
-#endif
-
 #ifdef HAVE_XKBCOMMON
 #include "../input/drivers_keyboard/keyboard_event_xkb.c"
-#endif
-
-/*============================================================
-STATE TRACKER
-============================================================ */
-#include "../gfx/video_state_tracker.c"
-
-#ifdef HAVE_PYTHON
-#include "../gfx/drivers_tracker/video_state_python.c"
 #endif
 
 /*============================================================
@@ -675,8 +832,9 @@ AUDIO RESAMPLER
 ============================================================ */
 #include "../libretro-common/audio/resampler/audio_resampler.c"
 #include "../libretro-common/audio/resampler/drivers/sinc_resampler.c"
+#ifdef HAVE_NEAREST_RESAMPLER
 #include "../libretro-common/audio/resampler/drivers/nearest_resampler.c"
-#include "../libretro-common/audio/resampler/drivers/null_resampler.c"
+#endif
 #ifdef HAVE_CC_RESAMPLER
 #include "../audio/drivers_resampler/cc_resampler.c"
 #endif
@@ -694,19 +852,15 @@ CAMERA
 #include "../camera/drivers/video4linux2.c"
 #endif
 
-#ifdef HAVE_VIDEO_PROCESSOR
+#ifdef HAVE_VIDEOPROCESSOR
 #include "../cores/libretro-video-processor/video_processor_v4l2.c"
 #endif
-
-#include "../camera/drivers/nullcamera.c"
 
 /*============================================================
 LEDS
 ============================================================ */
 
 #include "../led/led_driver.c"
-
-#include "../led/drivers/led_null.c"
 
 #if defined(HAVE_RPILED)
 #include "../led/drivers/led_rpi.c"
@@ -718,8 +872,6 @@ LOCATION
 #if defined(ANDROID)
 #include "../location/drivers/android.c"
 #endif
-
-#include "../location/drivers/nulllocation.c"
 
 /*============================================================
 RSOUND
@@ -742,11 +894,14 @@ AUDIO
 #include "../audio/drivers/wiiu_audio.c"
 #elif defined(EMSCRIPTEN)
 #include "../audio/drivers/rwebaudio.c"
-#elif defined(PSP) || defined(VITA)
+#elif defined(PSP) || defined(VITA) || defined(ORBIS)
 #include "../audio/drivers/psp_audio.c"
+#elif defined(PS2)
+#include "../audio/drivers/ps2_audio.c"
 #elif defined(_3DS)
 #include "../audio/drivers/ctr_csnd_audio.c"
 #include "../audio/drivers/ctr_dsp_audio.c"
+#include "../audio/drivers/ctr_dsp_thread_audio.c"
 #endif
 
 #ifdef HAVE_XAUDIO
@@ -782,6 +937,10 @@ AUDIO
 #include "../audio/drivers/tinyalsa.c"
 #endif
 
+#ifdef HAVE_PULSE
+#include "../audio/drivers/pulse.c"
+#endif
+
 #ifdef HAVE_AL
 #include "../audio/drivers/openal.c"
 #endif
@@ -790,15 +949,13 @@ AUDIO
 #include "../audio/drivers/coreaudio.c"
 #endif
 
-#include "../audio/drivers/nullaudio.c"
+#if defined(HAVE_WASAPI) || ((_WIN32_WINNT >= 0x0602) && !defined(__WINRT__))
+#include "../audio/common/mmdevice_common.c"
+#endif
 
 /*============================================================
 MIDI
 ============================================================ */
-#include "../midi/midi_driver.c"
-
-#include "../midi/drivers/null_midi.c"
-
 #ifdef HAVE_WINMM
 #include "../midi/drivers/winmm_midi.c"
 #endif
@@ -806,16 +963,15 @@ MIDI
 /*============================================================
 DRIVERS
 ============================================================ */
-#include "../gfx/video_driver.c"
 #include "../gfx/video_crt_switch.c"
-#include "../gfx/video_display_server.c"
+#include "../gfx/gfx_animation.c"
+#include "../gfx/gfx_display.c"
+#include "../gfx/gfx_thumbnail_path.c"
+#include "../gfx/gfx_thumbnail.c"
 #include "../gfx/video_coord_array.c"
-#include "../input/input_driver.c"
-#include "../audio/audio_driver.c"
+#ifdef HAVE_AUDIOMIXER
 #include "../libretro-common/audio/audio_mixer.c"
-#include "../camera/camera_driver.c"
-#include "../location/location_driver.c"
-#include "../driver.c"
+#endif
 
 /*============================================================
 SCALERS
@@ -828,8 +984,8 @@ SCALERS
 /*============================================================
 FILTERS
 ============================================================ */
-
 #ifdef HAVE_FILTERS_BUILTIN
+#ifdef HAVE_VIDEO_FILTER
 #include "../gfx/video_filters/2xsai.c"
 #include "../gfx/video_filters/super2xsai.c"
 #include "../gfx/video_filters/supereagle.c"
@@ -840,7 +996,11 @@ FILTERS
 #include "../gfx/video_filters/blargg_ntsc_snes.c"
 #include "../gfx/video_filters/lq2x.c"
 #include "../gfx/video_filters/phosphor2x.c"
+#include "../gfx/video_filters/normal2x.c"
+#include "../gfx/video_filters/scanline2x.c"
+#endif
 
+#ifdef HAVE_DSP_FILTER
 #include "../libretro-common/audio/dsp_filters/echo.c"
 #include "../libretro-common/audio/dsp_filters/eq.c"
 #include "../libretro-common/audio/dsp_filters/chorus.c"
@@ -850,14 +1010,18 @@ FILTERS
 #include "../libretro-common/audio/dsp_filters/reverb.c"
 #include "../libretro-common/audio/dsp_filters/wahwah.c"
 #endif
+#endif
 
 /*============================================================
 DYNAMIC
 ============================================================ */
 #include "../libretro-common/dynamic/dylib.c"
-#include "../dynamic.c"
+#ifdef HAVE_VIDEO_FILTER
 #include "../gfx/video_filter.c"
+#endif
+#ifdef HAVE_DSP_FILTER
 #include "../libretro-common/audio/dsp_filter.c"
+#endif
 
 /*============================================================
 CORES
@@ -878,24 +1042,40 @@ CORES
 FILE
 ============================================================ */
 #include "../libretro-common/file/file_path.c"
+#include "../libretro-common/file/file_path_io.c"
 #include "../file_path_special.c"
-#include "../file_path_str.c"
 #include "../libretro-common/lists/dir_list.c"
 #include "../libretro-common/lists/string_list.c"
 #include "../libretro-common/lists/file_list.c"
-#include "../setting_list.c"
 #include "../libretro-common/file/retro_dirent.c"
 #include "../libretro-common/streams/file_stream.c"
 #include "../libretro-common/streams/file_stream_transforms.c"
 #include "../libretro-common/streams/interface_stream.c"
 #include "../libretro-common/streams/memory_stream.c"
+#ifndef __WINRT__
 #include "../libretro-common/vfs/vfs_implementation.c"
-#include "../list_special.c"
+#endif
+
+#ifdef HAVE_CDROM
+#include "../libretro-common/cdrom/cdrom.c"
+#include "../libretro-common/vfs/vfs_implementation_cdrom.c"
+#include "../libretro-common/media/media_detect_cd.c"
+#endif
+
 #include "../libretro-common/string/stdstring.c"
 #include "../libretro-common/file/nbio/nbio_stdio.c"
+#if defined(__linux__)
 #include "../libretro-common/file/nbio/nbio_linux.c"
+#endif
+#if defined(HAVE_MMAP) && defined(BSD)
 #include "../libretro-common/file/nbio/nbio_unixmmap.c"
+#endif
+#if defined(HAVE_MMAP_WIN32)
 #include "../libretro-common/file/nbio/nbio_windowsmmap.c"
+#endif
+#if defined(ORBIS)
+#include "../libretro-common/file/nbio/nbio_orbis.c"
+#endif
 #include "../libretro-common/file/nbio/nbio_intf.c"
 
 /*============================================================
@@ -911,7 +1091,9 @@ CONFIGURATION
 /*============================================================
 STATE MANAGER
 ============================================================ */
+#ifdef HAVE_REWIND
 #include "../managers/state_manager.c"
+#endif
 
 /*============================================================
 FRONTEND
@@ -921,6 +1103,10 @@ FRONTEND
 
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
 #include "../frontend/drivers/platform_win32.c"
+#endif
+
+#if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
+#include "../frontend/drivers/platform_uwp.c"
 #endif
 
 #ifdef _XBOX
@@ -938,8 +1124,14 @@ FRONTEND
 #include "../frontend/drivers/platform_wiiu.c"
 #elif defined(PSP) || defined(VITA)
 #include "../frontend/drivers/platform_psp.c"
+#elif defined(ORBIS)
+#include "../frontend/drivers/platform_orbis.c"
+#elif defined(PS2)
+#include "../frontend/drivers/platform_ps2.c"
 #elif defined(_3DS)
 #include "../frontend/drivers/platform_ctr.c"
+#elif defined(SWITCH) && defined(HAVE_LIBNX)
+#include "../frontend/drivers/platform_switch.c"
 #elif defined(XENON)
 #include "../frontend/drivers/platform_xenon.c"
 #elif defined(__QNX__)
@@ -949,21 +1141,17 @@ FRONTEND
 #elif defined(DJGPP)
 #include "../frontend/drivers/platform_dos.c"
 #endif
-#include "../frontend/drivers/platform_null.c"
 
 #include "../core_info.c"
+#include "../core_backup.c"
+
+#if defined(HAVE_NETWORKING)
+#include "../core_updater_list.c"
+#endif
 
 /*============================================================
 UI
 ============================================================ */
-#include "../ui/ui_companion_driver.c"
-
-#include "../ui/drivers/ui_null.c"
-#include "../ui/drivers/null/ui_null_window.c"
-#include "../ui/drivers/null/ui_null_browser_window.c"
-#include "../ui/drivers/null/ui_null_msg_window.c"
-#include "../ui/drivers/null/ui_null_application.c"
-
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
 #include "../ui/drivers/ui_win32.c"
 #include "../ui/drivers/win32/ui_win32_window.c"
@@ -973,11 +1161,6 @@ UI
 #endif
 
 /*============================================================
-MAIN
-============================================================ */
-#include "../frontend/frontend.c"
-
-/*============================================================
 GIT
 ============================================================ */
 
@@ -985,14 +1168,10 @@ GIT
 #include "../version_git.c"
 #endif
 
-
 /*============================================================
 RETROARCH
 ============================================================ */
-#include "../core_impl.c"
 #include "../retroarch.c"
-#include "../dirs.c"
-#include "../paths.c"
 #include "../libretro-common/queues/task_queue.c"
 
 #include "../msg_hash.c"
@@ -1013,17 +1192,29 @@ RETROARCH
 #include "../intl/msg_hash_chs.c"
 #include "../intl/msg_hash_cht.c"
 #include "../intl/msg_hash_ar.c"
+#include "../intl/msg_hash_el.c"
+#include "../intl/msg_hash_tr.c"
+#include "../intl/msg_hash_sk.c"
+#include "../intl/msg_hash_fa.c"
+#include "../intl/msg_hash_he.c"
+#include "../intl/msg_hash_ast.c"
 #endif
 
 #include "../intl/msg_hash_us.c"
 
 /*============================================================
+BLUETOOTH
+============================================================ */
+#ifdef HAVE_BLUETOOTH
+#include "../bluetooth/drivers/bluetoothctl.c"
+#ifdef HAVE_DBUS
+#include "../bluetooth/drivers/bluez.c"
+#endif
+#endif
+
+/*============================================================
 WIFI
 ============================================================ */
-#include "../wifi/wifi_driver.c"
-
-#include "../wifi/drivers/nullwifi.c"
-
 #ifdef HAVE_LAKKA
 #include "../wifi/drivers/connmanctl.c"
 #endif
@@ -1031,10 +1222,6 @@ WIFI
 /*============================================================
 RECORDING
 ============================================================ */
-#include "../movie.c"
-#include "../record/record_driver.c"
-#include "../record/drivers/record_null.c"
-
 #ifdef HAVE_FFMPEG
 #include "../record/drivers/record_ffmpeg.c"
 #endif
@@ -1042,11 +1229,11 @@ RECORDING
 /*============================================================
 THREAD
 ============================================================ */
-#if defined(HAVE_THREADS) && defined(XENON)
-#include "../thread/xenon_sdl_threads.c"
-#elif defined(HAVE_THREADS)
+#if defined(HAVE_THREADS)
 
-#if defined(PSP)
+#if defined(XENON)
+#include "../thread/xenon_sdl_threads.c"
+#elif defined(PSP)
 #include "../deps/pthreads/platform/helper/tls-helper.c"
 #include "../deps/pthreads/platform/psp/psp_osal.c"
 #include "../deps/pthreads/pte_main.c"
@@ -1073,14 +1260,14 @@ THREAD
 #include "../audio/audio_thread_wrapper.c"
 #endif
 
+/* needed for both playlists and netplay lobbies */
+#include "../libretro-common/formats/json/jsonsax_full.c"
 
 /*============================================================
 NETPLAY
 ============================================================ */
 #ifdef HAVE_NETWORKING
-#define JSON_STATIC 1 /* must come before netplay_room_parse and jsonsax_full */
 #include "../network/netplay/netplay_delta.c"
-#include "../network/netplay/netplay_frontend.c"
 #include "../network/netplay/netplay_handshake.c"
 #include "../network/netplay/netplay_init.c"
 #include "../network/netplay/netplay_io.c"
@@ -1093,15 +1280,16 @@ NETPLAY
 #include "../libretro-common/net/net_socket.c"
 #include "../libretro-common/net/net_http.c"
 #include "../libretro-common/net/net_natt.c"
-#include "../libretro-common/formats/json/jsonsax_full.c"
-#if !defined(HAVE_SOCKET_LEGACY) && !defined(__wiiu__)
+#if !defined(HAVE_SOCKET_LEGACY)
 #include "../libretro-common/net/net_ifinfo.c"
 #endif
 #include "../tasks/task_http.c"
 #include "../tasks/task_netplay_lan_scan.c"
 #include "../tasks/task_netplay_nat_traversal.c"
+#include "../tasks/task_bluetooth.c"
 #include "../tasks/task_wifi.c"
 #include "../tasks/task_netplay_find_content.c"
+#include "../tasks/task_pl_thumbnail_download.c"
 #endif
 
 /*============================================================
@@ -1109,9 +1297,15 @@ DATA RUNLOOP
 ============================================================ */
 #include "../tasks/task_powerstate.c"
 #include "../tasks/task_content.c"
+#ifdef HAVE_PATCH
+#include "../tasks/task_patch.c"
+#endif
 #include "../tasks/task_save.c"
 #include "../tasks/task_image.c"
 #include "../tasks/task_file_transfer.c"
+#include "../tasks/task_playlist_manager.c"
+#include "../tasks/task_manual_content_scan.c"
+#include "../tasks/task_core_backup.c"
 #ifdef HAVE_ZLIB
 #include "../tasks/task_decompress.c"
 #endif
@@ -1119,11 +1313,16 @@ DATA RUNLOOP
 #include "../tasks/task_database.c"
 #include "../tasks/task_database_cue.c"
 #endif
+#if defined(HAVE_NETWORKING) && defined(HAVE_MENU)
+#include "../tasks/task_core_updater.c"
+#endif
 
 /*============================================================
 SCREENSHOTS
 ============================================================ */
+#ifdef HAVE_SCREENSHOTS
 #include "../tasks/task_screenshot.c"
+#endif
 
 /*============================================================
 PLAYLISTS
@@ -1133,23 +1332,24 @@ PLAYLISTS
 /*============================================================
 MENU
 ============================================================ */
+#ifdef HAVE_GFX_WIDGETS
+#include "../gfx/gfx_widgets.c"
+#ifdef HAVE_SCREENSHOTS
+#include "../gfx/widgets/gfx_widget_screenshot.c"
+#endif
+#include "../gfx/widgets/gfx_widget_volume.c"
+#include "../gfx/widgets/gfx_widget_generic_message.c"
+#include "../gfx/widgets/gfx_widget_libretro_message.c"
+#include "../gfx/widgets/gfx_widget_progress_message.c"
+#ifdef HAVE_CHEEVOS
+#include "../gfx/widgets/gfx_widget_achievement_popup.c"
+#endif
+#include "../gfx/widgets/gfx_widget_load_content_animation.c"
+#endif
+
 #ifdef HAVE_MENU
-#include "../menu/menu_driver.c"
-#include "../menu/menu_input.c"
-#include "../menu/menu_event.c"
-#include "../menu/menu_entries.c"
 #include "../menu/menu_setting.c"
-#include "../menu/menu_cbs.c"
-#include "../menu/menu_content.c"
 
-#include "../menu/menu_networking.c"
-
-#include "../menu/widgets/menu_entry.c"
-#include "../menu/widgets/menu_filebrowser.c"
-#include "../menu/widgets/menu_dialog.c"
-#include "../menu/widgets/menu_input_dialog.c"
-#include "../menu/widgets/menu_input_bind_dialog.c"
-#include "../menu/widgets/menu_osk.c"
 #include "../menu/cbs/menu_cbs_ok.c"
 #include "../menu/cbs/menu_cbs_cancel.c"
 #include "../menu/cbs/menu_cbs_select.c"
@@ -1167,77 +1367,31 @@ MENU
 #include "../menu/cbs/menu_cbs_up.c"
 #include "../menu/cbs/menu_cbs_down.c"
 #include "../menu/cbs/menu_cbs_contentlist_switch.c"
-#include "../menu/menu_shader.c"
 #include "../menu/menu_displaylist.c"
-#include "../menu/menu_animation.c"
-
-#include "../menu/drivers/null.c"
-#include "../menu/drivers/menu_generic.c"
-
-#include "../menu/drivers_display/menu_display_null.c"
-
-#if defined(HAVE_D3D8)
-#include "../menu/drivers_display/menu_display_d3d8.c"
+#ifdef HAVE_LIBRETRODB
+#include "../menu/menu_explore.c"
+#endif
 #endif
 
-#if defined(HAVE_D3D9)
-#include "../menu/drivers_display/menu_display_d3d9.c"
+#if defined(HAVE_LIBNX)
+#include "../gfx/drivers_display/gfx_display_switch.c"
 #endif
-
-#if defined(HAVE_D3D10)
-#include "../menu/drivers_display/menu_display_d3d10.c"
-#endif
-
-#if defined(HAVE_D3D11)
-#include "../menu/drivers_display/menu_display_d3d11.c"
-#endif
-
-#if defined(HAVE_D3D12)
-#include "../menu/drivers_display/menu_display_d3d12.c"
-#endif
-
-#ifdef HAVE_OPENGL
-#include "../menu/drivers_display/menu_display_gl.c"
-#endif
-
-#ifdef HAVE_VULKAN
-#include "../menu/drivers_display/menu_display_vulkan.c"
-#endif
-
-#ifdef HAVE_VITA2D
-#include "../menu/drivers_display/menu_display_vita2d.c"
-#endif
-
-#ifdef _3DS
-#include "../menu/drivers_display/menu_display_ctr.c"
-#endif
-
-#ifdef WIIU
-#include "../menu/drivers_display/menu_display_wiiu.c"
-#endif
-
-#ifdef HAVE_CACA
-#include "../menu/drivers_display/menu_display_caca.c"
-#endif
-
-#ifdef DJGPP
-#include "../menu/drivers_display/menu_display_vga.c"
-#endif
-
-#if defined(_WIN32) && !defined(_XBOX)
-#include "../menu/drivers_display/menu_display_gdi.c"
-#endif
-
-#endif
-
 
 #ifdef HAVE_RGUI
 #include "../menu/drivers/rgui.c"
 #endif
 
-#if defined(HAVE_OPENGL) || defined(HAVE_VITA2D) || defined(_3DS) || defined(_MSC_VER) || defined(__wiiu__) || defined(HAVE_METAL)
 #ifdef HAVE_XMB
 #include "../menu/drivers/xmb.c"
+#endif
+
+#ifdef HAVE_OZONE
+#include "../menu/drivers/ozone/ozone.c"
+#include "../menu/drivers/ozone/ozone_display.c"
+#include "../menu/drivers/ozone/ozone_entries.c"
+#include "../menu/drivers/ozone/ozone_sidebar.c"
+#include "../menu/drivers/ozone/ozone_texture.c"
+#include "../menu/drivers/ozone/ozone_theme.c"
 #endif
 
 #ifdef HAVE_STRIPES
@@ -1248,61 +1402,17 @@ MENU
 #include "../menu/drivers/materialui.c"
 #endif
 
-#ifdef HAVE_NUKLEAR
-#include "../menu/drivers/nuklear/nk_common.c"
-#include "../menu/drivers/nuklear/nk_menu.c"
-#include "../menu/drivers/nuklear/nk_wnd_debug.c"
-#include "../menu/drivers/nuklear.c"
-#endif
-
-#ifdef HAVE_ZARCH
-#include "../menu/drivers/zarch.c"
-#endif
-
-#endif
-
 #ifdef HAVE_NETWORKGAMEPAD
-#include "../input/input_remote.c"
 #include "../cores/libretro-net-retropad/net_retropad_core.c"
 #endif
-
-#include "../input/input_mapper.c"
-
-#include "../command.c"
 
 #if defined(HAVE_NETWORKING)
 #include "../libretro-common/net/net_http_parse.c"
 #endif
 
-#ifdef HAVE_RUNAHEAD
-#include "../runahead/mem_util.c"
-#include "../runahead/secondary_core.c"
-#include "../runahead/run_ahead.c"
-#include "../runahead/copy_load_info.c"
-#include "../runahead/dirty_input.c"
-#include "../runahead/mylist.c"
-#endif
-
 /*============================================================
 DEPENDENCIES
 ============================================================ */
-#ifdef WANT_ZLIB
-#include "../deps/libz/adler32.c"
-#include "../deps/libz/compress.c"
-#include "../deps/libz/libz-crc32.c"
-#include "../deps/libz/deflate.c"
-#include "../deps/libz/gzclose.c"
-#include "../deps/libz/gzlib.c"
-#include "../deps/libz/gzread.c"
-#include "../deps/libz/gzwrite.c"
-#include "../deps/libz/inffast.c"
-#include "../deps/libz/inflate.c"
-#include "../deps/libz/inftrees.c"
-#include "../deps/libz/trees.c"
-#include "../deps/libz/uncompr.c"
-#include "../deps/libz/zutil.c"
-#endif
-
 #ifdef HAVE_FLAC
 #include "../deps/libFLAC/bitmath.c"
 #include "../deps/libFLAC/bitreader.c"
@@ -1321,7 +1431,26 @@ DEPENDENCIES
 #include "../deps/libFLAC/stream_decoder.c"
 #endif
 
+#ifdef HAVE_ZLIB
+#ifndef HAVE_NO_BUILTINZLIB
+#include "../deps/libz/adler32.c"
+#include "../deps/libz/compress.c"
+#include "../deps/libz/libz-crc32.c"
+#include "../deps/libz/deflate.c"
+#include "../deps/libz/gzclose.c"
+#include "../deps/libz/gzlib.c"
+#include "../deps/libz/gzread.c"
+#include "../deps/libz/gzwrite.c"
+#include "../deps/libz/inffast.c"
+#include "../deps/libz/inflate.c"
+#include "../deps/libz/inftrees.c"
+#include "../deps/libz/trees.c"
+#include "../deps/libz/uncompr.c"
+#include "../deps/libz/zutil.c"
+#endif
+
 #ifdef HAVE_CHD
+#include "../libretro-common/formats/libchdr/libchdr_zlib.c"
 #include "../libretro-common/formats/libchdr/libchdr_bitstream.c"
 #include "../libretro-common/formats/libchdr/libchdr_cdrom.c"
 #include "../libretro-common/formats/libchdr/libchdr_chd.c"
@@ -1331,10 +1460,6 @@ DEPENDENCIES
 #include "../libretro-common/formats/libchdr/libchdr_flac_codec.c"
 #endif
 
-#ifdef HAVE_ZLIB
-#include "../libretro-common/formats/libchdr/libchdr_zlib.c"
-#endif
-
 #ifdef HAVE_7ZIP
 #include "../libretro-common/formats/libchdr/libchdr_lzma.c"
 #endif
@@ -1342,6 +1467,7 @@ DEPENDENCIES
 #include "../libretro-common/formats/libchdr/libchdr_huffman.c"
 
 #include "../libretro-common/streams/chd_stream.c"
+#endif
 #endif
 
 #ifdef HAVE_7ZIP
@@ -1361,22 +1487,40 @@ DEPENDENCIES
 #include "../deps/7zip/7zBuf.c"
 #endif
 
+#ifdef WANT_LIBFAT
+#include "../deps/libfat/cache.c"
+#include "../deps/libfat/directory.c"
+#include "../deps/libfat/disc.c"
+#include "../deps/libfat/fatdir.c"
+#include "../deps/libfat/fatfile.c"
+#include "../deps/libfat/file_allocation_table.c"
+#include "../deps/libfat/filetime.c"
+#include "../deps/libfat/libfat.c"
+#include "../deps/libfat/lock.c"
+#include "../deps/libfat/partition.c"
+#endif
+
+#ifdef WANT_IOSUHAX
+#include "../deps/libiosuhax/iosuhax.c"
+#include "../deps/libiosuhax/iosuhax_devoptab.c"
+#include "../deps/libiosuhax/iosuhax_disc_interface.c"
+#endif
+
 /*============================================================
 XML
 ============================================================ */
-#if 0
-#ifndef HAVE_LIBXML2
-#define RXML_LIBXML2_COMPAT 1
 #include "../libretro-common/formats/xml/rxml.c"
-#endif
-#endif
+#include "../libretro-common/formats/logiqx_dat/logiqx_dat.c"
+#include "../deps/yxml/yxml.c"
 
 /*============================================================
  AUDIO UTILS
 ============================================================ */
 #include "../libretro-common/audio/conversion/s16_to_float.c"
 #include "../libretro-common/audio/conversion/float_to_s16.c"
+#ifdef HAVE_AUDIOMIXER
 #include "../libretro-common/audio/audio_mix.c"
+#endif
 
 /*============================================================
  LIBRETRODB
@@ -1409,19 +1553,21 @@ XML
 /*============================================================
 HTTP SERVER
 ============================================================ */
-#if defined(HAVE_HTTPSERVER) && defined(HAVE_ZLIB)
-#include "../deps/civetweb/civetweb.c"
-#include "network/httpserver/httpserver.c"
-#endif
-
 #if defined(HAVE_DISCORD)
-#include "../discord/discord.c"
+#if defined(_WIN32)
+#include "../deps/discord-rpc/src/discord_register_win.c"
+#endif
+#if defined(__linux__)
+#include "../deps/discord-rpc/src/discord_register_linux.c"
+#endif
 #endif
 
 /*============================================================
 SSL
 ============================================================ */
 #if defined(HAVE_SSL)
+#if defined(HAVE_NETWORKING)
+#if defined(HAVE_BUILTINMBEDTLS)
 #include "../deps/mbedtls/aes.c"
 #include "../deps/mbedtls/aesni.c"
 #include "../deps/mbedtls/arc4.c"
@@ -1434,27 +1580,20 @@ SSL
 #include "../deps/mbedtls/ccm.c"
 #include "../deps/mbedtls/cipher.c"
 #include "../deps/mbedtls/cipher_wrap.c"
-#include "../deps/mbedtls/cmac.c"
 #include "../deps/mbedtls/ctr_drbg.c"
 #include "../deps/mbedtls/des.c"
 #include "../deps/mbedtls/dhm.c"
 #include "../deps/mbedtls/ecdh.c"
 #include "../deps/mbedtls/ecdsa.c"
-#include "../deps/mbedtls/ecjpake.c"
 #include "../deps/mbedtls/ecp.c"
 #include "../deps/mbedtls/ecp_curves.c"
 #include "../deps/mbedtls/entropy.c"
 #include "../deps/mbedtls/entropy_poll.c"
-#include "../deps/mbedtls/error.c"
 #include "../deps/mbedtls/gcm.c"
-#include "../deps/mbedtls/havege.c"
 #include "../deps/mbedtls/hmac_drbg.c"
 #include "../deps/mbedtls/md.c"
-#include "../deps/mbedtls/md2.c"
-#include "../deps/mbedtls/md4.c"
 #include "../deps/mbedtls/md5.c"
 #include "../deps/mbedtls/md_wrap.c"
-#include "../deps/mbedtls/memory_buffer_alloc.c"
 #include "../deps/mbedtls/oid.c"
 #include "../deps/mbedtls/padlock.c"
 #include "../deps/mbedtls/pem.c"
@@ -1464,7 +1603,6 @@ SSL
 #include "../deps/mbedtls/pkcs5.c"
 #include "../deps/mbedtls/pkparse.c"
 #include "../deps/mbedtls/pkwrite.c"
-#include "../deps/mbedtls/platform.c"
 #include "../deps/mbedtls/ripemd160.c"
 #include "../deps/mbedtls/rsa.c"
 #include "../deps/mbedtls/sha1.c"
@@ -1472,12 +1610,9 @@ SSL
 #include "../deps/mbedtls/sha512.c"
 #include "../deps/mbedtls/threading.c"
 #include "../deps/mbedtls/timing.c"
-#include "../deps/mbedtls/version.c"
-#include "../deps/mbedtls/version_features.c"
 #include "../deps/mbedtls/xtea.c"
 
 #include "../deps/mbedtls/certs.c"
-#include "../deps/mbedtls/pkcs11.c"
 #include "../deps/mbedtls/x509.c"
 #include "../deps/mbedtls/x509_create.c"
 #include "../deps/mbedtls/x509_crl.c"
@@ -1495,4 +1630,44 @@ SSL
 #include "../deps/mbedtls/ssl_srv.c"
 #include "../deps/mbedtls/ssl_ticket.c"
 #include "../deps/mbedtls/ssl_tls.c"
+
+#include "../libretro-common/net/net_socket_ssl_mbed.c"
+#endif
+#endif
+#endif
+
+#ifdef HAVE_GONG
+#include "../cores/libretro-gong/gong.c"
+#endif
+
+/*============================================================
+PLAYLIST NAME SANITIZATION
+============================================================ */
+#include "../libretro-common/playlists/label_sanitization.c"
+
+/*============================================================
+MANUAL CONTENT SCAN
+============================================================ */
+#include "../manual_content_scan.c"
+
+/*============================================================
+DISK CONTROL INTERFACE
+============================================================ */
+#include "../disk_control_interface.c"
+
+/*============================================================
+MISC FILE FORMATS
+============================================================ */
+#include "../libretro-common/formats/m3u/m3u_file.c"
+
+/*============================================================
+TIME
+============================================================ */
+#include "../libretro-common/time/rtime.c"
+
+/*============================================================
+ANDROID PLAY FEATURE DELIVERY
+============================================================ */
+#if defined(ANDROID)
+#include "../play_feature_delivery/play_feature_delivery.c"
 #endif

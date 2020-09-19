@@ -33,7 +33,7 @@
 #include "config.h"
 #endif
 
-#include "../audio_driver.h"
+#include "../../retroarch.h"
 #include "../../verbosity.h"
 
 #ifdef HAVE_OSS_BSD
@@ -42,6 +42,7 @@
 #define DEFAULT_OSS_DEV "/dev/dsp"
 #endif
 
+/* TODO/FIXME - static global variable */
 static bool oss_is_paused = false;
 
 static void *oss_init(const char *device, unsigned rate, unsigned latency,

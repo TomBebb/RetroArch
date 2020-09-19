@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2018 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
 *
 * ---------------------------------------------------------------------------------------
 * The following license statement only applies to this file (file_stream_transforms.h).
@@ -47,6 +47,7 @@ RETRO_BEGIN_DECLS
 #undef fprintf
 #undef ferror
 #undef feof
+#undef fscanf
 
 #define fopen rfopen
 #define fclose rfclose
@@ -61,6 +62,7 @@ RETRO_BEGIN_DECLS
 #define fprintf rfprintf
 #define ferror rferror
 #define feof rfeof
+#define fscanf rfscanf
 
 #endif
 
@@ -91,6 +93,8 @@ int rfprintf(RFILE * stream, const char * format, ...);
 int rferror(RFILE* stream);
 
 int rfeof(RFILE* stream);
+
+int rfscanf(RFILE * stream, const char * format, ...);
 
 RETRO_END_DECLS
 
